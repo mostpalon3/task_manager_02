@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { Edit, Trash2, Plus, Save, X } from 'lucide-react';
 
 const initialColumns = {
@@ -30,6 +29,8 @@ const TaskManagementApp = () => {
   const [newTaskDescription, setNewTaskDescription] = useState('');
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [addToColumn, setAddToColumn] = useState('todo');
+  const [draggedTask, setDraggedTask] = useState(null);
+
 
   useEffect(() => {
     const savedTasks = localStorage.getItem('tasks');
@@ -48,61 +49,6 @@ const TaskManagementApp = () => {
     }
   }, [tasks, columns]);
 
-  const onDragEnd = (result) => {
-    const { destination, source, draggableId } = result;
-
-    if (!destination || 
-        (destination.droppableId === source.droppableId && 
-         destination.index === source.index)) {
-      return;
-    }
-
-    if (source.droppableId === destination.droppableId) {
-      const column = columns[source.droppableId];
-      const newTaskIds = Array.from(column.taskIds);
-      
-      newTaskIds.splice(source.index, 1);
-      newTaskIds.splice(destination.index, 0, draggableId);
-
-      const newColumn = {
-        ...column,
-        taskIds: newTaskIds
-      };
-
-      const newColumns = {
-        ...columns,
-        [newColumn.id]: newColumn
-      };
-
-      setColumns(newColumns);
-      return;
-    }
-
-    const sourceColumn = columns[source.droppableId];
-    const destColumn = columns[destination.droppableId];
-    
-    const sourceTaskIds = Array.from(sourceColumn.taskIds);
-    const destTaskIds = Array.from(destColumn.taskIds);
-
-    sourceTaskIds.splice(source.index, 1);
-    
-    destTaskIds.splice(destination.index, 0, draggableId);
-
-    const newColumns = {
-      ...columns,
-      [sourceColumn.id]: {
-        ...sourceColumn,
-        taskIds: sourceTaskIds
-      },
-      [destColumn.id]: {
-        ...destColumn,
-        taskIds: destTaskIds
-      }
-    };
-
-    setColumns(newColumns);
-  };
-
   const addNewTask = () => {
     if (newTaskTitle.trim() === '') return;
 
@@ -114,19 +60,21 @@ const TaskManagementApp = () => {
     };
 
     const column = columns[addToColumn];
-    const newTaskIds = Array.from(column.taskIds);
-    newTaskIds.push(newTaskId);
+    const newTaskIds = [...column.taskIds, newTaskId];
 
-    const updatedColumns = {
-      ...columns,
+    setTasks(prevTasks => ({
+      ...prevTasks,
+      [newTaskId]: newTask
+    }));
+    
+    setColumns(prevColumns => ({
+      ...prevColumns,
       [addToColumn]: {
         ...column,
         taskIds: newTaskIds
       }
-    };
-
-    setTasks({ ...tasks, [newTaskId]: newTask });
-    setColumns(updatedColumns);
+    }));
+    
     setNewTaskTitle('');
     setNewTaskDescription('');
     setIsAddingTask(false);
@@ -143,16 +91,15 @@ const TaskManagementApp = () => {
   const saveTaskEdit = () => {
     if (!editingTask || editingTask.title.trim() === '') return;
 
-    const updatedTasks = {
-      ...tasks,
+    setTasks(prevTasks => ({
+      ...prevTasks,
       [editingTask.id]: {
-        ...tasks[editingTask.id],
+        ...prevTasks[editingTask.id],
         title: editingTask.title,
         description: editingTask.description
       }
-    };
+    }));
 
-    setTasks(updatedTasks);
     setEditingTask(null);
   };
 
@@ -168,22 +115,83 @@ const TaskManagementApp = () => {
 
     if (!columnWithTask) return;
 
+    // Remove task ID from column
     const column = columns[columnWithTask];
     const newTaskIds = column.taskIds.filter(id => id !== taskId);
 
-    const updatedColumns = {
+    // Create new state objects
+    const newTasks = { ...tasks };
+    delete newTasks[taskId];
+
+    setTasks(newTasks);
+    setColumns({
       ...columns,
       [columnWithTask]: {
         ...column,
         taskIds: newTaskIds
       }
-    };
+    });
+  };
 
-    const newTasks = { ...tasks };
-    delete newTasks[taskId];
+  const handleDragStart = (e, taskId, sourceColumnId) => {
+    e.dataTransfer.setData('taskId', taskId);
+    e.dataTransfer.setData('sourceColumnId', sourceColumnId);
+    setDraggedTask(taskId);
+    
+    const ghost = e.target.cloneNode(true);
+    ghost.style.position = 'absolute';
+    ghost.style.top = '-1000px';
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, 20, 20);
+    
+    setTimeout(() => {
+      document.body.removeChild(ghost);
+    }, 0);
+  };
 
-    setTasks(newTasks);
-    setColumns(updatedColumns);
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDragEnter = (e, columnId) => {
+    e.preventDefault();
+    e.currentTarget.classList.add('bg-blue-100');
+  };
+
+  const handleDragLeave = (e) => {
+    e.currentTarget.classList.remove('bg-blue-100');
+  };
+
+  const handleDrop = (e, targetColumnId) => {
+    e.preventDefault();
+    e.currentTarget.classList.remove('bg-blue-100');
+    
+    const taskId = e.dataTransfer.getData('taskId');
+    const sourceColumnId = e.dataTransfer.getData('sourceColumnId');
+
+    if (sourceColumnId === targetColumnId) return;
+
+
+    const sourceColumn = columns[sourceColumnId];
+    const newSourceTaskIds = sourceColumn.taskIds.filter(id => id !== taskId);
+
+    const targetColumn = columns[targetColumnId];
+    const newTargetTaskIds = [...targetColumn.taskIds, taskId];
+
+    setColumns({
+      ...columns,
+      [sourceColumnId]: {
+        ...sourceColumn,
+        taskIds: newSourceTaskIds
+      },
+      [targetColumnId]: {
+        ...targetColumn,
+        taskIds: newTargetTaskIds
+      }
+    });
+
+    setDraggedTask(null);
   };
 
   return (
@@ -255,9 +263,8 @@ const TaskManagementApp = () => {
         </div>
       )}
 
-      {/* Task editing modal */}
       {editingTask && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white p-6 rounded shadow-lg w-full max-w-md">
             <h2 className="text-xl font-bold mb-4">Edit Task</h2>
             <div className="mb-3">
@@ -296,69 +303,63 @@ const TaskManagementApp = () => {
         </div>
       )}
 
-      {/* Board */}
-      <DragDropContext onDragEnd={onDragEnd}>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {columnOrder.map(columnId => {
-            const column = columns[columnId];
-            const columnTasks = column.taskIds.map(taskId => tasks[taskId]);
-            
-            return (
-              <div key={column.id} className="bg-gray-100 p-4 rounded shadow">
-                <h2 className="font-bold text-xl mb-4 text-center">{column.title}</h2>
-                <Droppable droppableId={column.id}>
-                  {(provided, snapshot) => (
-                    <div
-                      ref={provided.innerRef}
-                      {...provided.droppableProps}
-                      className={`min-h-64 ${snapshot.isDraggingOver ? 'bg-blue-50' : ''}`}
-                    >
-                      {columnTasks.map((task, index) => (
-                        task ? (
-                          <Draggable key={task.id} draggableId={task.id} index={index}>
-                            {(provided, snapshot) => (
-                              <div
-                                ref={provided.innerRef}
-                                {...provided.draggableProps}
-                                {...provided.dragHandleProps}
-                                className={`bg-white p-3 mb-2 rounded shadow ${
-                                  snapshot.isDragging ? 'shadow-lg' : ''
-                                }`}
-                              >
-                                <div className="flex justify-between items-start mb-2">
-                                  <h3 className="font-bold">{task.title}</h3>
-                                  <div className="flex gap-2">
-                                    <button 
-                                      onClick={() => editTask(task.id)}
-                                      className="text-blue-600 hover:text-blue-800"
-                                    >
-                                      <Edit size={16} />
-                                    </button>
-                                    <button 
-                                      onClick={() => deleteTask(task.id)}
-                                      className="text-red-600 hover:text-red-800"
-                                    >
-                                      <Trash2 size={16} />
-                                    </button>
-                                  </div>
-                                </div>
-                                {task.description && (
-                                  <p className="text-gray-700 text-sm">{task.description}</p>
-                                )}
-                              </div>
-                            )}
-                          </Draggable>
-                        ) : null
-                      ))}
-                      {provided.placeholder}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {columnOrder.map(columnId => {
+          const column = columns[columnId];
+          const columnTasks = column.taskIds.map(taskId => tasks[taskId]).filter(Boolean);
+          
+          return (
+            <div 
+              key={column.id} 
+              className="bg-gray-100 p-4 rounded shadow transition-colors duration-200"
+              onDragOver={handleDragOver}
+              onDragEnter={(e) => handleDragEnter(e, column.id)}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => handleDrop(e, column.id)}
+            >
+              <h2 className="font-bold text-xl mb-4 text-center">{column.title}</h2>
+              <div className="min-h-64 space-y-2">
+                {columnTasks.map((task) => (
+                  <div
+                    key={task.id}
+                    className={`bg-white p-3 rounded shadow cursor-move transition-shadow duration-200 ${
+                      draggedTask === task.id ? 'opacity-50' : ''
+                    }`}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, task.id, column.id)}
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <h3 className="font-bold">{task.title}</h3>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => editTask(task.id)}
+                          className="text-blue-600 hover:text-blue-800"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button 
+                          onClick={() => deleteTask(task.id)}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </div>
-                  )}
-                </Droppable>
+                    {task.description && (
+                      <p className="text-gray-700 text-sm">{task.description}</p>
+                    )}
+                  </div>
+                ))}
+                {columnTasks.length === 0 && (
+                  <div className="text-center text-gray-500 py-6">
+                    Drop tasks here
+                  </div>
+                )}
               </div>
-            );
-          })}
-        </div>
-      </DragDropContext>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
